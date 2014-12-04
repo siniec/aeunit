@@ -110,7 +110,9 @@ func (this *InMemoryDatastore) Call(method string, in, out appengine_internal.Pr
 	}
 }
 
-func (this *InMemoryDatastore) Close() {}
+func (this *InMemoryDatastore) Close() error {
+	return nil
+}
 
 func (this *InMemoryDatastore) PutMulti(req *pb.PutRequest, res *pb.PutResponse) error {
 	// TODO (siniec): fix incomplete keys

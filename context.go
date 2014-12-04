@@ -8,17 +8,21 @@ import (
 
 type Service interface {
 	Call(method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error
-	Close()
+	Close() error
 }
 
 type Context struct {
 	services map[string]Service
 }
 
-func (this *Context) Close() {
+func (this *Context) Close() error {
+	var err error
 	for _, s := range this.services {
-		s.Close()
+		if e := s.Close(); e != nil {
+			err = e
+		}
 	}
+	return err
 }
 
 func NewContext() *Context {

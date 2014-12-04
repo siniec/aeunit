@@ -20,4 +20,6 @@ func (this *goService) Call(method string, in, out appengine_internal.ProtoMessa
 	}
 }
 
-func (this *goService) Close() {}
+func (this *goService) Close() error {
+	return nil
+}

@@ -1,9 +1,10 @@
 package datastore
 
 import (
-	"aeunit"
 	"appengine"
 	"appengine/datastore"
+	"appengine_internal"
+	pb "appengine_internal/base"
 	"errors"
 	"fmt"
 	"reflect"
@@ -41,10 +42,10 @@ func thing(seq int) Thing {
 	}
 }
 
-func newContext() *aeunit.Context {
-	c := aeunit.NewContext()
-	c.SetDatastore(NewDs())
-	return c
+func newContext() appengine.Context {
+	return &testContext{
+		ds: New(),
+	}
 }
 
 func TestDatastorePutGet(t *testing.T) {
@@ -493,6 +494,36 @@ func TestDatastoreTransactionIsolation(t *testing.T) {
 		return nil
 	}, nil)
 }
+
+type testContext struct {
+	ds *InMemoryDatastore
+}
+
+func (this *testContext) Debugf(s string, v ...interface{}) {
+	fmt.Printf(s, v...)
+	fmt.Println()
+}
+func (this *testContext) Infof(s string, v ...interface{})     { this.Debugf(s, v...) }
+func (this *testContext) Warningf(s string, v ...interface{})  { this.Debugf(s, v...) }
+func (this *testContext) Errorf(s string, v ...interface{})    { this.Debugf(s, v...) }
+func (this *testContext) Criticalf(s string, v ...interface{}) { this.Debugf(s, v...) }
+func (this *testContext) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
+	switch {
+	case service == "__go__":
+		if method == "GetNamespace" || method == "GetDefaultNamespace" {
+			s := ""
+			outStr := out.(*pb.StringProto)
+			outStr.Value = &s
+		}
+		return nil
+	case service == "datastore_v3":
+		return this.ds.Call(method, in, out, opts)
+	default:
+		return fmt.Errorf("Unknown service: %s", service)
+	}
+}
+func (this *testContext) FullyQualifiedAppID() string { return "dev~aeunit" }
+func (this *testContext) Request() interface{}        { panic("Request() is not implemented") }
 
 func PanicIfErr(err error) {
 	if err != nil {
