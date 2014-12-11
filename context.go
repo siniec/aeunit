@@ -6,15 +6,15 @@ import (
 	"github.com/siniec/aeunit/datastore"
 )
 
-type LogLvl int
+type LogLevel int
 
 const (
-	LogLvlDebug    LogLvl = 5
-	LogLvlInfo            = 4
-	LogLvlWarning         = 3
-	LogLvlError           = 2
-	LogLvlCritical        = 1
-	LogLvlNone            = 0
+	LogLevelDebug    LogLevel = 5
+	LogLevelInfo              = 4
+	LogLevelWarning           = 3
+	LogLevelError             = 2
+	LogLevelCritical          = 1
+	LogLevelNone              = 0
 )
 
 type Service interface {
@@ -23,14 +23,23 @@ type Service interface {
 }
 
 type ContextOptions struct {
-	LogLevel LogLvl
 }
 
-var defaultContextOptions = ContextOptions{}
+type Logger interface {
+	Logf(lvl LogLevel, s string, v ...interface{})
+}
+
+type defaultLogger struct{}
+
+func (this *defaultLogger) Logf(lvl LogLevel, s string, v ...interface{}) {
+	fmt.Printf(s+"\n", v...)
+}
 
 type Context struct {
 	opt      ContextOptions
 	services map[string]Service
+	logger   Logger
+	appID    string
 }
 
 func (this *Context) Close() error {
@@ -45,11 +54,12 @@ func (this *Context) Close() error {
 
 func NewContext(opt *ContextOptions) *Context {
 	if opt == nil {
-		opt = &defaultContextOptions
+		opt = &ContextOptions{}
 	}
-	c := &Context{opt: *opt, services: make(map[string]Service)}
+	c := &Context{opt: *opt, services: make(map[string]Service), appID: "dev~aeunit"}
 	c.SetService("__go__", &goService{})
 	c.SetService("datastore_v3", datastore.New())
+	c.logger = &defaultLogger{}
 	return c
 }
 
@@ -57,18 +67,21 @@ func (this *Context) SetService(name string, service Service) {
 	this.services[name] = service
 }
 
-// TODO: make a logger interface, so we can change it, and make a deaultLogger struct
-func (this *Context) logf(lvl LogLvl, s string, v ...interface{}) {
-	if this.opt.LogLevel >= lvl {
-		fmt.Printf(s+"\n", v...)
+func (this *Context) SetLogger(logger Logger) {
+	this.logger = logger
+}
+
+func (this *Context) logf(lvl LogLevel, s string, v ...interface{}) {
+	if this.logger != nil {
+		this.logger.Logf(lvl, s, v...)
 	}
 }
 
-func (this *Context) Debugf(s string, v ...interface{})    { this.logf(LogLvlDebug, s, v...) }
-func (this *Context) Infof(s string, v ...interface{})     { this.logf(LogLvlInfo, s, v...) }
-func (this *Context) Warningf(s string, v ...interface{})  { this.logf(LogLvlWarning, s, v...) }
-func (this *Context) Errorf(s string, v ...interface{})    { this.logf(LogLvlError, s, v...) }
-func (this *Context) Criticalf(s string, v ...interface{}) { this.logf(LogLvlCritical, s, v...) }
+func (this *Context) Debugf(s string, v ...interface{})    { this.logf(LogLevelDebug, s, v...) }
+func (this *Context) Infof(s string, v ...interface{})     { this.logf(LogLevelInfo, s, v...) }
+func (this *Context) Warningf(s string, v ...interface{})  { this.logf(LogLevelWarning, s, v...) }
+func (this *Context) Errorf(s string, v ...interface{})    { this.logf(LogLevelError, s, v...) }
+func (this *Context) Criticalf(s string, v ...interface{}) { this.logf(LogLevelCritical, s, v...) }
 
 func (this *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
 	if s, ok := this.services[service]; ok {
@@ -79,7 +92,11 @@ func (this *Context) Call(service, method string, in, out appengine_internal.Pro
 }
 
 func (this *Context) FullyQualifiedAppID() string {
-	return "dev~aeunit"
+	return this.appID
+}
+
+func (this *Context) SetFullyQualifiedAppID(id string) {
+	this.appID = id
 }
 
 func (this *Context) Request() interface{} {
