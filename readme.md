@@ -9,7 +9,6 @@ An in memory datastore
 
 ### Not supported / TODOS
 
-* multiple filters (support for only one at the moment)
-* slice values (filter, order ++)
+* slice values (order ++)
 * End(), Project(), Distinct() operators on datastore.Query
 * more

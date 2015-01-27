@@ -205,46 +205,172 @@ func TestDatastoreQueryOrder(t *testing.T) {
 }
 
 func TestDatastoreQueryFilter(t *testing.T) {
-	c := newContext()
-	keys, objs := keysAndObjs(c, "Kind", 10)
-	_, err := datastore.PutMulti(c, keys, objs)
-	PanicIfErr(err)
-
+	type obj struct {
+		I  int64
+		F  float64
+		Is []int64
+		Fs []float64
+	}
 	type f struct {
 		op  string
 		val interface{}
 	}
 	tests := []struct {
-		filters  []f
-		expected []Thing
+		name    string
+		objs    []obj // object stored in datastore
+		filters []f
+		want    []int // indexes of the objects from .objs we want returned by the query
 	}{
 		// Non existant field
-		{[]f{f{"NonExistantField=", 1}}, []Thing{}},
-		// One field
-		{[]f{f{"IntProp=", 0}}, []Thing{}},
-		{[]f{f{"IntProp=", 1}}, []Thing{thing(1)}},
-		{[]f{f{"IntProp<", 2}}, []Thing{thing(1)}},
-		{[]f{f{"IntProp>", 9}}, []Thing{thing(10)}},
-		{[]f{f{"IntProp<=", 2}}, []Thing{thing(1), thing(2)}},
-		{[]f{f{"IntProp>=", 9}}, []Thing{thing(9), thing(10)}},
-		// One field, multiple conditions
-		{[]f{f{"IntProp>", 3}, f{"IntProp=", 1}}, []Thing{}},
-		{[]f{f{"IntProp>", 3}, f{"IntProp<", 5}}, []Thing{thing(4)}},
+		{
+			name:    "Non existant field",
+			objs:    []obj{obj{I: 1, F: 1}},
+			filters: []f{f{"NonExistantField=", 1}},
+			want:    nil,
+		},
+		// // One field
+		{
+			name:    "=",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I=", 1}},
+			want:    []int{1},
+		},
+		{
+			name:    "<",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I<", 2}},
+			want:    []int{0, 1},
+		},
+		{
+			name:    "<=",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I<=", 1}},
+			want:    []int{0, 1},
+		},
+		{
+			name:    "<",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I>", 0}},
+			want:    []int{1, 2},
+		},
+		{
+			name:    "<=",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I>=", 1}},
+			want:    []int{1, 2},
+		},
+		// // One field, multiple conditions
+		{
+			name:    "I=1 && I=2",
+			objs:    []obj{obj{I: 1}, obj{I: 2}},
+			filters: []f{f{"I=", 1}, f{"I=", 2}},
+			want:    nil,
+		},
+		{
+			name:    "1 < I < 4",
+			objs:    []obj{obj{I: 0}, obj{I: 1}, obj{I: 2}, obj{I: 3}, obj{I: 4}, obj{I: 5}},
+			filters: []f{f{"I>", 1}, f{"I<", 4}},
+			want:    []int{2, 3},
+		},
 		// Multiple fields, multiple conditions
-		// Note that DblProp is equal to IntProp + 0.5
-		{[]f{f{"IntProp=", 1}, f{"DblProp=", 1.5}}, []Thing{thing(1)}},
-		{[]f{f{"IntProp=", 1}, f{"DblProp>", 1.5}}, []Thing{}},
-		{[]f{f{"IntProp>", 2}, f{"DblProp<", 5.5}}, []Thing{thing(3), thing(4)}},
+		{
+			name:    "I = 1, F = 2.5",
+			objs:    []obj{obj{I: 1, F: 2.4}, obj{I: 1, F: 2.5}, obj{I: 2, F: 2.5}},
+			filters: []f{f{"I=", 1}, f{"F=", 2.5}},
+			want:    []int{1},
+		},
+		{
+			name:    "1 < I < 4, F = 2.5",
+			objs:    []obj{obj{I: 1, F: 2.5}, obj{I: 2, F: 2.5}, obj{I: 3, F: 2.5}, obj{I: 3, F: 2.4}},
+			filters: []f{f{"I>", 1}, f{"I<", 4}, f{"F=", 2.5}},
+			want:    []int{1, 2},
+		},
+		// Slice field(s)
+		{
+			name: "Is = 2",
+			objs: []obj{
+				obj{Is: []int64{-1, 0, 1}}, // don't want
+				obj{Is: []int64{0, 1, 2}},  // want
+				obj{Is: []int64{1, 2, 3}},  // want
+				obj{Is: []int64{2, 3, 4}},  // want
+				obj{Is: []int64{3, 4, 5}}}, // don't want
+			filters: []f{f{"Is=", 2}},
+			want:    []int{1, 2, 3},
+		},
+		{
+			name: "Is > 2",
+			objs: []obj{
+				obj{Is: []int64{-1, 0, 1}}, // don't want
+				obj{Is: []int64{0, 1, 2}},  // don't want
+				obj{Is: []int64{1, 2, 3}},  // want
+				obj{Is: []int64{2, 3, 4}},  // want
+				obj{Is: []int64{3, 4, 5}}}, // want
+			filters: []f{f{"Is>", 2}},
+			want:    []int{2, 3, 4},
+		},
+		// "Special" slice cases (non intuitive/unexpected behaviours):
+		// see https://cloud.	google.com/appengine/docs/go/datastore/queries#Go_Filters
+		// Multiple equality filters on slice property matches if at least one slice value matches *one* of the filters
+		{
+			name: "Is = 2, Is = 3",
+			objs: []obj{
+				obj{Is: []int64{-1, 0, 1}}, // don't want
+				obj{Is: []int64{0, 1, 2}},  // want (2)
+				obj{Is: []int64{1, 2, 3}},  // want (2 and 3)
+				obj{Is: []int64{2, 3, 4}},  // want (2 and 3)
+				obj{Is: []int64{3, 4, 5}},  // want (3)
+				obj{Is: []int64{4, 5, 6}}}, // don't want
+			filters: []f{f{"Is=", 2}, f{"Is=", 3}},
+			want:    []int{1, 2, 3, 4}, // want entities with slice containing 2 or 3 or both 2 and 3
+		},
+		{
+			// "If a query has multiple inequality filters on a given property, an entity will match the query only if
+			// at least one of its individual values for the property satisfies all of the filters"
+			name: "2 > Is > 4",
+			objs: []obj{
+				obj{Is: []int64{0, 1, 2}},  // don't want
+				obj{Is: []int64{1, 2, 3}},  // want
+				obj{Is: []int64{2, 3, 4}},  // want
+				obj{Is: []int64{3, 4, 5}},  // want
+				obj{Is: []int64{4, 5, 6}}}, // don't want
+			filters: []f{f{"Is>", 2}, f{"Is<", 4}},
+			want:    []int{1, 2, 3}, // want entities with slice containing 3
+		},
+
+		//TODO: key equality
 	}
 
 	for _, test := range tests {
-		q := datastore.NewQuery("Kind")
+		c := newContext()
+		keys := make([]*datastore.Key, len(test.objs))
+		for i := range test.objs {
+			keys[i] = datastore.NewKey(c, "Obj", "", int64(i+1), nil)
+		}
+		if _, err := datastore.PutMulti(c, keys, test.objs); err != nil {
+			t.Errorf("Error saving objects (should not happen): %v", err)
+			continue
+		}
+
+		q := datastore.NewQuery("Obj")
 		for _, filter := range test.filters {
 			q = q.Filter(filter.op, filter.val)
 		}
-		if e := expect(c, q, test.expected); e != "" {
-			t.Errorf("Filter %v: %s", test.filters, e)
+		var got []obj
+		_, err := q.GetAll(c, &got)
+		if err != nil {
+			t.Errorf("Test %s: GetAll() returned error %v", test.name, err)
 		}
+		if len(got) != len(test.want) {
+			t.Errorf("Test %s: GetAll() returned wrong number of entities (got %d, want %d).\nGot %v", test.name, len(got), len(test.want), got)
+		} else {
+			for i, wantIndex := range test.want {
+				want := test.objs[wantIndex]
+				if !reflect.DeepEqual(got[i], want) {
+					t.Errorf("Test %s: GetAll() returned wrong entity at index %d.\nGot  %v\nWant %v", test.name, i, got[i], want)
+				}
+			}
+		}
+		// TODO: check keys
 	}
 }
 

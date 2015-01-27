@@ -64,22 +64,36 @@ func newSortableEntities(p []*pb.EntityProto, order []*pb.Query_Order) *sortable
 	}
 }
 
-func getProperty(e *pb.EntityProto) []*pb.Property {
+func getProperty(e *pb.EntityProto, name string) []*pb.Property {
 	props := e.GetProperty()
 	if len(props) == 0 {
 		props = e.GetRawProperty()
 	}
-	return props
+	var ps []*pb.Property
+	for _, prop := range props {
+		if prop.GetName() == name {
+			ps = append(ps, prop)
+		}
+	}
+	return ps
 }
 
 func getPropValue(e *pb.EntityProto, name string) *pb.PropertyValue {
-	props := getProperty(e)
-	for _, p := range props {
-		if p.GetName() == name {
-			return p.GetValue()
-		}
+	props := getProperty(e, name)
+	if len(props) == 0 {
+		return nil
+	} else {
+		return props[0].GetValue()
 	}
-	return nil
+}
+
+func getPropValues(e *pb.EntityProto, name string) []*pb.PropertyValue {
+	props := getProperty(e, name)
+	var values []*pb.PropertyValue
+	for _, p := range props {
+		values = append(values, p.GetValue())
+	}
+	return values
 }
 
 func getCompFn(order []*pb.Query_Order) comparer {
@@ -162,16 +176,9 @@ func (this *sortableEntities) SortableBy(order []*pb.Query_Order) {
 	for _, ep := range this.protos {
 		hasAllProps := true
 		for _, o := range order {
-			props := getProperty(ep)
-			hasProp := false
-			for _, prop := range props {
-				if prop.GetName() == o.GetProperty() {
-					hasProp = true
-					break
-				}
-			}
-			if !hasProp {
-				hasAllProps = false
+			props := getProperty(ep, o.GetProperty())
+			hasAllProps = hasAllProps && len(props) > 0
+			if !hasAllProps {
 				break
 			}
 		}
@@ -182,26 +189,22 @@ func (this *sortableEntities) SortableBy(order []*pb.Query_Order) {
 	this.protos = sortable
 }
 
-func (this *sortableEntities) Filter(filters []*pb.Query_Filter) {
-	if len(filters) == 0 {
-		return
+func anyValueMatches(values []*pb.PropertyValue, filters []*pb.Query_Filter, matchOnAllFilters bool) bool {
+	if len(values) == 0 {
+		return false
 	}
-	filtered := make([]*pb.EntityProto, 0, len(this.protos))
-	for _, e := range this.protos {
-		ok := true
-		for _, filter := range filters {
-			fp := filter.GetProperty()[0] // datastore always sets this to a slice with length 1
-			ep := getPropValue(e, fp.GetName())
-			if ep == nil {
-				ok = false
-				break
-			}
-			d, valid := comparePropertyValue(ep, fp.GetValue())
+	for _, filter := range filters {
+		var ok bool
+		want := filter.GetProperty()[0].GetValue()
+		for _, val := range values {
+			d, valid := comparePropertyValue(val, want)
 			if !valid {
-				ok = false
-				break
+				if matchOnAllFilters {
+					return false
+				} else {
+					continue
+				}
 			}
-
 			switch filter.GetOp() {
 			case pb.Query_Filter_EQUAL:
 				ok = d == 0
@@ -216,13 +219,64 @@ func (this *sortableEntities) Filter(filters []*pb.Query_Filter) {
 			default:
 				panic("aeunit datastore: Unsupported query filter operation: " + filter.GetOp().String())
 			}
+			if ok {
+				// We found a match. No need to search through the rest of the values for a match
+				break
+			}
+		}
+		if ok && !matchOnAllFilters {
+			// if we only need to match on one (any) filter and we already did, return true now
+			return true
+		}
+		if !ok && matchOnAllFilters {
+			// if we need to match on all filters, and this filter did not have a match, the match has failed
+			return false
+		}
+	}
+	return matchOnAllFilters
+}
 
-			if !ok {
+func (this *sortableEntities) Filter(filters []*pb.Query_Filter) {
+	if len(filters) == 0 {
+		return
+	}
+
+	any := make(map[string]bool)
+	filtersPerProp := make(map[string][]*pb.Query_Filter)
+	for _, filter := range filters {
+		propName := filter.GetProperty()[0].GetName()
+		filtersPerProp[propName] = append(filtersPerProp[propName], filter)
+	}
+	for propName, filters := range filtersPerProp {
+		i := 0
+		allEq := true
+		for _, filter := range filters {
+			if filter.GetOp() != pb.Query_Filter_EQUAL {
+				allEq = false
+				break
+			} else {
+				i++
+			}
+		}
+		if i >= 2 && allEq {
+			any[propName] = true
+		}
+	}
+
+	filtered := make([]*pb.EntityProto, 0, len(this.protos))
+	for _, entity := range this.protos {
+		ok := true
+		for propName, filters := range filtersPerProp {
+			props := getProperty(entity, propName)
+			multi := len(props) > 0 && props[0].GetMultiple()
+			any := multi && any[propName]
+			values := getPropValues(entity, propName)
+			if ok = anyValueMatches(values, filters, !any); !ok {
 				break
 			}
 		}
 		if ok {
-			filtered = append(filtered, e)
+			filtered = append(filtered, entity)
 		}
 	}
 	this.protos = filtered
