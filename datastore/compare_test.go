@@ -3,7 +3,7 @@ package datastore
 import (
 	"appengine/datastore"
 	pb "appengine_internal/datastore"
-	"code.google.com/p/goprotobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"testing"
 )
 
