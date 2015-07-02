@@ -7,6 +7,10 @@ Package for testing App Engine in golang without using the dev server. A faster 
 
 An in memory datastore
 
+## run tests
+
+    goapp test -v ./...
+
 ### Not supported / TODOS
 
 * slice values (order ++)
